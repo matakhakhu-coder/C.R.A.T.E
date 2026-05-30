@@ -38,7 +38,7 @@
 | Tagline | — | TBC — brand copywriter decision required |
 | Platform Legal Positioning | "Developmental play assistant" and "STEAM interest exploration tool" | Confirmed (HPCSA compliance mandate) |
 | Primary Domain | — | TBC — domain registration required |
-| Staging Domain | — | TBC — assigned by Vercel on Phase 0 setup |
+| Staging Domain | https://crate-platform.vercel.app | Confirmed — Phase 0.5 |
 | Company Registration Number | — | TBC — CIPC registration required |
 | VAT Number | — | TBC — SARS registration required |
 | B-BBEE Status / Level | — | TBC — pending ownership structure confirmation |
@@ -267,7 +267,7 @@ The following items must be resolved before any production deployment. This is t
 client data and credential collection checklist.
 
 1. Legal business name (CIPC registration)
-2. Primary domain name (registration + DNS configuration)
+2. Primary domain name (registration + DNS configuration — staging confirmed: https://crate-platform.vercel.app)
 3. B-BBEE structure and NPO / Section 18A foundation establishment
 4. VAT registration number
 5. Physical registered address

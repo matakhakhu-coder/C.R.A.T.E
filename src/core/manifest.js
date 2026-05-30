@@ -20,7 +20,7 @@ export const BRAND = Object.freeze({
 
   // ── Domains ────────────────────────────────────────────────────────────────
   domain:      null,   // TBC — domain registration required
-  stagingUrl:  null,   // TBC — assigned by Vercel on Phase 0 setup
+  stagingUrl:  'https://crate-platform.vercel.app',   // Confirmed — Phase 0.5
   adminPath:   '/admin',
 
   // ── Contact ────────────────────────────────────────────────────────────────
