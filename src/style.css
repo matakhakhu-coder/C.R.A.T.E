@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* ── 48px minimum tap target enforcement ───────────────────────────────────
+     All interactive elements must meet this threshold for mobile usability.
+     Mobile-first baseline: 390px. Every section must be fully usable at 390px. */
+  button,
+  a,
+  [role="button"],
+  input[type="submit"],
+  input[type="button"] {
+    min-height: 48px;
+    min-width: 48px;
+  }
+
+  /* ── Base typography scale ─────────────────────────────────────────────────
+     Headings use Nunito, body copy uses Inter. */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Nunito', sans-serif;
+  }
+
+  body {
+    font-family: 'Inter', sans-serif;
+  }
+
+  /* ── CSS transitions use class toggling only — never inline style mutation ─ */
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  /* ── Button system ─────────────────────────────────────────────────────────*/
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2
+           min-h-[48px] px-6 py-3
+           bg-cr-coral text-cr-cream font-heading font-bold
+           rounded-xl shadow-cta
+           transition-all duration-200
+           hover:bg-[#C44E35] active:scale-95
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cr-coral;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2
+           min-h-[48px] px-6 py-3
+           border-2 border-cr-coral text-cr-coral font-heading font-bold
+           rounded-xl bg-transparent
+           transition-all duration-200
+           hover:bg-cr-coral hover:text-cr-cream active:scale-95
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cr-coral;
+  }
+
+  .btn-consent {
+    @apply inline-flex items-center justify-center gap-2
+           min-h-[48px] px-6 py-3
+           bg-cr-sage text-cr-cream font-heading font-bold
+           rounded-xl shadow-card
+           transition-all duration-200
+           hover:brightness-110 active:scale-95
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cr-sage;
+  }
+
+  /* ── Card ──────────────────────────────────────────────────────────────────*/
+  .card {
+    @apply bg-white rounded-2xl shadow-card
+           hover:shadow-card-hover transition-shadow duration-300;
+  }
+
+  /* ── Dimension pill ────────────────────────────────────────────────────────
+     Used to label play trajectory dimensions in the parent dashboard.
+     Never contains clinical or diagnostic language — HPCSA guardrail. */
+  .dimension-pill {
+    @apply inline-flex items-center gap-2
+           px-3.5 py-1.5 rounded-full
+           font-body text-xs font-medium uppercase tracking-wider;
+  }
+}
