@@ -1,4 +1,4 @@
-name: C.R.A.T.E. Substrate Preflight & Compilation Validation
+name: C.R.A.T.E. Substrate Preflight and Compilation Validation
 
 on:
   push:
@@ -12,43 +12,29 @@ on:
 
 jobs:
   substrate-preflight:
-    name: Substrate Preflight & Engineering Asset Check
+    name: Substrate Preflight and Engineering Asset Check
     runs-on: ubuntu-latest
 
     steps:
-      # ── Step 1: Checkout repository source ──────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Step 2: Set up Node.js runtime ──────────────────────────────────────
       - name: Set up Node.js 20.x
         uses: actions/setup-node@v4
         with:
           node-version: '20.x'
           cache: 'npm'
 
-      # ── Step 3: Install dependencies ────────────────────────────────────────
-      # Uses npm ci for a clean, reproducible install from package-lock.json.
-      # Ensures the CI environment matches the exact dependency tree committed.
       - name: Install dependencies
         run: npm ci
 
-      # ── Step 4: Substrate preflight check ───────────────────────────────────
-      # Runs scripts/launch.js — scans manifest.js for TBC nulls and flags.js
-      # for active simulation channels. Exits with code 0 regardless of warning
-      # count; warnings are advisory and do not block the pipeline.
       - name: Run substrate preflight check
         run: npm run launch
 
-      # ── Step 5: Compilation validation ──────────────────────────────────────
-      # Runs vite build — must exit 0 to confirm structural integrity.
-      # A non-zero exit here blocks all downstream deployments.
       - name: Run compilation validation
         run: npm run build
 
-      # ── Step 6: Report build artefact sizes ─────────────────────────────────
       - name: Report build artefact sizes
         run: |
-          echo "── Build artefact summary ──────────────────────────────────"
+          echo "Build artefact summary"
           du -sh dist/assets/* 2>/dev/null || echo "No artefacts in dist/assets"
-          echo "────────────────────────────────────────────────────────────"
