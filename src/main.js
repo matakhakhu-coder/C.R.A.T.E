@@ -23,6 +23,8 @@ import { init as initCrateRecommender, generateCrateManifest } from '@/modules/C
 // Phase 7: Subscription checkout surface and session confirmation receipt.
 import * as SubscriptionManager from '@/modules/SubscriptionManager.js'
 import * as SessionSummary       from '@/modules/SessionSummary.js'
+// Phase 8: Admin shell — never imported by customer modules (isolation enforced).
+import * as AdminShell from '@/admin/AdminShell.js'
 
 // ── DOM mount ─────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')
@@ -649,17 +651,8 @@ function render(path, ctx = {}) {
     return SubscriptionManager.render(planParam)
   }
 
-  if (route === '/admin') {
-    return `
-      <div class="min-h-screen bg-cr-slate flex flex-col items-center justify-center px-4">
-        <div class="text-center max-w-lg">
-          <p class="font-heading text-cr-coral text-sm font-bold uppercase tracking-widest mb-3">Admin Only — Coming in Phase 8</p>
-          <h1 class="font-heading text-cr-cream text-3xl md:text-4xl font-extrabold mb-4">Admin Control Shell</h1>
-          <p class="font-body text-cr-cream/65 text-base mb-8">Order management and crate queue views will be available here.</p>
-          <a href="/" data-nav class="btn-secondary text-sm">&#8592; Back to Home</a>
-        </div>
-      </div>`
-  }
+  // Phase 8: Admin shell — single-pass render
+  if (route === '/admin') return AdminShell.render()
 
   return `
     <div class="min-h-screen bg-cr-slate flex flex-col items-center justify-center px-4">
@@ -1369,6 +1362,7 @@ function init(path, ctx = {}) {
   if (route === '/')          _initMarketingShell()
   if (route === '/app')       _initApp(ctx)
   if (route === '/sandbox')   _initSandbox()
+  if (route === '/admin')     AdminShell.init()
   if (route === '/subscribe') {
     const planParam = new URLSearchParams(window.location.search).get('plan') || null
     SubscriptionManager.init(planParam)
