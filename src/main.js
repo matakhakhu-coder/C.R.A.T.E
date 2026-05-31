@@ -13,7 +13,9 @@ import { createSubscription }  from '@/core/integrations/payment.js'
 import { registerParent }      from '@/core/integrations/auth.js'
 import { sendOTP, verifyOTP }  from '@/core/integrations/otp.js'
 import { storeParentRecord }   from '@/core/integrations/piiStore.js'
-import { uploadSessionData }   from '@/core/integrations/telemetry.js'
+// Phase 4: uploadSessionData and assessment now handled by TelemetryCollector pipeline.
+// TelemetryCollector receives cr:sessionEnd, calls uploadSessionData, then AssessmentEngine.
+import { init as initTelemetryCollector } from '@/modules/TelemetryCollector.js'
 
 // ── DOM mount ─────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')
@@ -1281,27 +1283,35 @@ function _bufferSignal(sandboxName, data) {
   _sandboxSigBuffer[key]++
 }
 
-// ── Flush buffered signals as a session upload (called on route change) ───────
-async function _flushSandboxSession() {
+// ── Flush buffered signals — dispatches cr:sessionEnd for Phase 4 pipeline ───
+// Phase 4 architecture: this function no longer calls uploadSessionData directly.
+// It dispatches cr:sessionEnd with the full session payload.
+// TelemetryCollector._onSessionEnd() receives it and runs the full pipeline:
+//   GAP computation → localStorage history → uploadSessionData → AssessmentEngine
+//
+// Deficit fix: directive used cr_parent_token as pseudoUUID — that is the auth
+// token (PII-adjacent). Correct anonymous identifier is cr_child_uuid per CLAUDE.md.
+function _flushSandboxSession() {
   const keys = Object.keys(_sandboxSigBuffer)
   if (keys.length === 0) return
-  const pseudoUUID    = localStorage.getItem('cr_child_uuid') || 'anon-sandbox'
-  const sessionSecs   = (Date.now() - _sandboxSessionMs) / 1000
-  const microSignals  = { ...JSON.parse(JSON.stringify(_sandboxSigBuffer)) }
-  console.log('[SIM] sandbox — flushing session · signals:', JSON.stringify(microSignals))
-  try {
-    await uploadSessionData({
+
+  const pseudoUUID = localStorage.getItem('cr_child_uuid') || 'anon-sandbox'
+  const signals    = { ...JSON.parse(JSON.stringify(_sandboxSigBuffer)) }
+  const sessionMs  = Date.now() - _sandboxSessionMs
+  const sessionId  = `cr-sandbox-${Date.now()}`
+
+  // Dispatch cr:sessionEnd — TelemetryCollector handles the rest
+  document.dispatchEvent(new CustomEvent('cr:sessionEnd', {
+    detail: {
       pseudoUUID,
-      sessionId:       `cr-sandbox-${Date.now()}`,
-      timestamp:       new Date().toISOString(),
-      microSignals,
-      gapMetric:       sessionSecs,
-      sessionDuration: sessionSecs,
-      levelCount:      _sandboxBodies.length,
-      // POPIA: zero PII fields — pseudoUUID only, no name/email/phone
-    })
-    console.log('[SIM] sandbox — session uploaded · duration:', sessionSecs.toFixed(1), 's')
-  } catch (e) { /* silent — sandbox must not disrupt on upload failure */ }
+      signals,
+      sessionMs,
+      bodyCount: _sandboxBodies.length,
+      sessionId,
+    },
+  }))
+
+  console.log('[SIM] sandbox — cr:sessionEnd dispatched · signals:', JSON.stringify(signals))
   _sandboxSigBuffer = {}
 }
 
@@ -1395,10 +1405,18 @@ function _hydrate(path) {
 // ── Browser history ────────────────────────────────────────────────────────────
 window.addEventListener('popstate', () => { _hydrate(window.location.pathname) })
 
-// ── Flush sandbox on page unload ──────────────────────────────────────────────
+// ── Flush sandbox signals on page unload ─────────────────────────────────────
+// Dispatches cr:sessionEnd synchronously. TelemetryCollector's localStorage
+// write (Step 3) is synchronous so session data is preserved even if the
+// async uploadSessionData call doesn't complete before the page closes.
 window.addEventListener('beforeunload', () => {
-  if (_sandboxRAF && Object.keys(_sandboxSigBuffer).length > 0) _flushSandboxSession()
+  if (Object.keys(_sandboxSigBuffer).length > 0) _flushSandboxSession()
 })
+
+// ── Phase 4: Initialize TelemetryCollector once at module load ───────────────
+// Binds the cr:sessionEnd listener on document before the first hydration.
+// This ensures the collector is ready regardless of which route loads first.
+initTelemetryCollector()
 
 // ── Initial load ──────────────────────────────────────────────────────────────
 _hydrate(window.location.pathname)
