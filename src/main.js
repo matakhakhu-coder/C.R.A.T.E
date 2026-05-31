@@ -18,6 +18,8 @@ import { storeParentRecord }   from '@/core/integrations/piiStore.js'
 import { init as initTelemetryCollector } from '@/modules/TelemetryCollector.js'
 // Phase 5: ParentDashboard renders and initialises the authenticated parent view.
 import * as ParentDashboard from '@/modules/ParentDashboard.js'
+// Phase 6: CrateRecommender computes 70/20/10 manifests and drives the POD pipeline.
+import { init as initCrateRecommender, generateCrateManifest } from '@/modules/CrateRecommender.js'
 
 // ── DOM mount ─────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')
@@ -625,8 +627,8 @@ function render(path, ctx = {}) {
   }
 
   if (route === '/app') {
-    // Phase 5: authenticated parents see the ParentDashboard, not the portal stub
-    if (ctx.isOnboarded) return ParentDashboard.render(ctx.activeProfile)
+    // Phase 5+6: authenticated parents see dashboard with live crate preview
+    if (ctx.isOnboarded) return ParentDashboard.render(ctx.activeProfile, ctx.latestManifest)
     const d = _appFormData
     if (_appStep === 1) return _renderWizardStep1(d)
     if (_appStep === 2) return _renderWizardStep2(d)
@@ -722,8 +724,16 @@ function _initMarketingShell() {
 // PHASE 2 INIT
 // =============================================================================
 function _initApp(ctx) {
-  // Phase 5: hand off to ParentDashboard.init() for the authenticated view
-  if (ctx.isOnboarded) { ParentDashboard.init(ctx.activeProfile); return }
+  // Phase 5+6: dashboard + crate recommender pipeline
+  if (ctx.isOnboarded) {
+    ParentDashboard.init(ctx.activeProfile)
+    initCrateRecommender()   // idempotent — binds cr:profileUpdated + cr:wheelSpinDetected
+    // Generate initial manifest if none exists yet and profile has session data
+    if (!ctx.latestManifest && ctx.activeProfile?.dimensions) {
+      generateCrateManifest(ctx.activeProfile).catch(() => {})
+    }
+    return
+  }
   const s = _appStep
   if (s === 1) _initStep1()
   if (s === 2) _initStep2()
@@ -1412,10 +1422,21 @@ function _hydrate(path) {
     } catch { /* corrupted profile — render empty state */ }
   }
 
+  // Load latest crate manifest for Phase 6 preview (most recent cr_sim_orders entry)
+  let _latestManifest = null
+  try {
+    const _ordersRaw = localStorage.getItem('cr_sim_orders')
+    if (_ordersRaw) {
+      const _orders = JSON.parse(_ordersRaw)
+      if (_orders.length > 0) _latestManifest = _orders[0]
+    }
+  } catch { /* ignore — CratePreview renders empty state */ }
+
   const ctx = {
     consentAccepted: localStorage.getItem('cr_consent_accepted') === 'true',
     isOnboarded:     !!localStorage.getItem('cr_parent_token') && localStorage.getItem('cr_popia_signed') === 'true',
     activeProfile:   _activeProfile,
+    latestManifest:  _latestManifest,
   }
 
   app.innerHTML = render(path, ctx)   // ONE innerHTML write

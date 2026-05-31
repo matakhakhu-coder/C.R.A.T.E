@@ -17,8 +17,11 @@
 // writes parentName, parentEmail, parentPhone, or any Database A field.
 // The erasure function purges ALL cr_* keys across both databases.
 
+import * as CratePreview from '@/modules/CratePreview.js'
+
 // ── Module state ──────────────────────────────────────────────────────────────
 let _profileListenerActive = false   // Idempotent guard for cr:profileUpdated
+let _crateListenerActive   = false   // Idempotent guard for cr:crateReady
 
 // ── Ordered list of dimension keys (matches assessmentTables.js) ──────────────
 const _DIM_ORDER = [
@@ -134,47 +137,9 @@ function _renderDimensionCard(dimKey, dimData) {
     </div>`
 }
 
-// ── _renderCratePreview(profileData) ─────────────────────────────────────────
-// Phase 6 placeholder. Derives a kit focus from the strongest interest area.
-// Returns generic growth-framed copy — no clinical kit recommendations.
-function _renderCratePreview(profileData) {
-  // Find the dimension with the strongest established posterior
-  let topDim = null
-  let topEstablished = -1
-
-  if (profileData?.dimensions) {
-    for (const [key, data] of Object.entries(profileData.dimensions)) {
-      const est = data?.posteriors?.established ?? 0
-      if (est > topEstablished) { topEstablished = est; topDim = key }
-    }
-  }
-
-  const kitFocusLabel  = topDim ? (_DIM[topDim]?.label || 'exploration') : 'exploration'
-  const kitDescription = topDim
-    ? `Based on your builder's current play patterns, we're preparing a kit that supports their growing interest in ${kitFocusLabel.toLowerCase()} — with hands-on materials that match where they are right now.`
-    : 'Complete your first sandbox session to unlock a personalised kit preview tailored to your builder\'s unique play style.'
-
-  return `
-    <div class="bg-cr-charcoal rounded-2xl border border-cr-charcoal/60 p-5">
-      <div class="flex items-center gap-2 mb-3">
-        <span class="inline-block w-2 h-2 rounded-full bg-cr-coral flex-shrink-0"></span>
-        <h3 class="font-heading text-cr-cream text-sm font-bold">Upcoming Crate Preview</h3>
-        <span class="ml-auto font-body text-cr-cream/30 text-xs">Phase 6 — Coming soon</span>
-      </div>
-      <p class="font-body text-cr-cream/55 text-sm leading-relaxed mb-4">${kitDescription}</p>
-      <div class="flex flex-wrap gap-2">
-        <span class="px-2.5 py-1 rounded-full bg-cr-sage/10 text-cr-sage font-body text-xs">
-          Physical kit
-        </span>
-        <span class="px-2.5 py-1 rounded-full bg-cr-sage/10 text-cr-sage font-body text-xs">
-          Monthly delivery
-        </span>
-        <span class="px-2.5 py-1 rounded-full bg-cr-sage/10 text-cr-sage font-body text-xs">
-          Bilingual cards (EN &amp; AF)
-        </span>
-      </div>
-    </div>`
-}
+// Phase 6: _renderCratePreview removed — CratePreview.render(manifest) is now
+// called directly from _renderDashboardContent(). The manifest is loaded from
+// cr_sim_orders localStorage and passed through the render chain.
 
 // ── _renderEmptyState() ───────────────────────────────────────────────────────
 // Shown when profileData is null or has no completed sessions.
@@ -199,11 +164,11 @@ function _renderEmptyState() {
     </div>`
 }
 
-// ── _renderDashboardContent(profileData) ──────────────────────────────────────
+// ── _renderDashboardContent(profileData, manifest) ───────────────────────────
 // Returns the inner profile-specific section of the dashboard.
-// This section is re-hydrated by init() when cr:profileUpdated fires.
-// The outer shell (nav header, POPIA deletion zone) is NOT re-rendered.
-function _renderDashboardContent(profileData) {
+// Re-hydrated by init() when cr:profileUpdated fires (profile section only).
+// Crate zone (#cr-crate-zone) is hot-swapped by cr:crateReady listener.
+function _renderDashboardContent(profileData, manifest = null) {
   const hasData = profileData?.sessionCount > 0 && profileData?.dimensions
 
   // ── Session summary bar ────────────────────────────────────────────────────
@@ -248,8 +213,8 @@ function _renderDashboardContent(profileData) {
       </div>
     `}
 
-    <!-- Crate preview placeholder (Phase 6) -->
-    <div class="mt-6">${_renderCratePreview(profileData)}</div>`
+    <!-- Crate preview zone — hot-swapped by cr:crateReady in init() -->
+    <div id="cr-crate-zone" class="mt-6">${CratePreview.render(manifest)}</div>`
 }
 
 // ── _formatDate(isoString) ────────────────────────────────────────────────────
@@ -262,10 +227,11 @@ function _formatDate(iso) {
 }
 
 // =============================================================================
-// EXPORTED: render(profileData)
+// EXPORTED: render(profileData, manifest)
 // Full page HTML — rendered by main.js when ctx.isOnboarded is true.
+// manifest is the latest cr_sim_orders[0] entry loaded in _hydrate().
 // =============================================================================
-export function render(profileData) {
+export function render(profileData, manifest = null) {
   const nick = profileData?.childNickname
     || localStorage.getItem('cr_child_nickname')
     || 'Explorer'
@@ -306,7 +272,7 @@ export function render(profileData) {
 
         <!-- Profile content section — re-hydrated by init() on cr:profileUpdated -->
         <div id="cr-profile-section">
-          ${_renderDashboardContent(profileData)}
+          ${_renderDashboardContent(profileData, manifest)}
         </div>
 
         <!-- ── POPIA Data Management Zone ──────────────────────────────────── -->
@@ -355,6 +321,20 @@ export function init(profileData) {
     console.log('[CRATE] ParentDashboard: cr:profileUpdated listener active')
   }
 
+  // ── Idempotent: bind cr:crateReady listener for hot-swap crate zone ───────
+  if (!_crateListenerActive) {
+    _crateListenerActive = true
+    document.addEventListener('cr:crateReady', (e) => {
+      const { manifest } = e.detail || {}
+      const zone = document.getElementById('cr-crate-zone')
+      if (!zone) return   // Not on dashboard — silently ignore
+      zone.innerHTML = CratePreview.render(manifest)
+      CratePreview.init(manifest)
+      console.log('[CRATE] ParentDashboard: crate zone hot-swapped — orderId:', manifest?.orderId)
+    })
+    console.log('[CRATE] ParentDashboard: cr:crateReady listener active')
+  }
+
   // ── Wire deletion CTA ─────────────────────────────────────────────────────
   _initDeleteCTA()
 
@@ -384,8 +364,15 @@ function _onProfileUpdated(event) {
     childAgeGroup: localStorage.getItem('cr_child_age_group') || '',
   }
 
+  // Load latest manifest for the crate zone
+  let latestManifest = null
+  try {
+    const ordersRaw = localStorage.getItem('cr_sim_orders')
+    if (ordersRaw) { const orders = JSON.parse(ordersRaw); latestManifest = orders[0] || null }
+  } catch { /* ignore */ }
+
   // Single-pass re-hydration of the profile section only
-  section.innerHTML = _renderDashboardContent(enriched)
+  section.innerHTML = _renderDashboardContent(enriched, latestManifest)
 
   // Rebind deletion CTA — new DOM element, previous listener is gone
   _initDeleteCTA()
