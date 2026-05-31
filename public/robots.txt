@@ -1,4 +1,3 @@
-# C.R.A.T.E. — Staging environment
-# Full crawl block active. Toggled to Allow: / by scripts/launch.js at production promotion.
 User-agent: *
-Disallow: /
+Allow: /
+Sitemap: https://crate-platform.vercel.app/sitemap.xml

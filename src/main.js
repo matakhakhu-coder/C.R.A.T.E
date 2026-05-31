@@ -25,6 +25,8 @@ import * as SubscriptionManager from '@/modules/SubscriptionManager.js'
 import * as SessionSummary       from '@/modules/SessionSummary.js'
 // Phase 8: Admin shell — never imported by customer modules (isolation enforced).
 import * as AdminShell from '@/admin/AdminShell.js'
+// Phase 11: SEO metadata engine — injected after every app.innerHTML write.
+import * as SEOEngine from '@/core/SEOEngine.js'
 
 // ── DOM mount ─────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')
@@ -1408,6 +1410,13 @@ function _hydrate(path) {
       SessionSummary.render(_sessionRef),
       _renderFooter(),
     ].join('')
+    // Phase 11: confirmation receipts are noindex — private order pages
+    SEOEngine.updateMeta({
+      title:       'Order Confirmed',
+      description: 'Your C.R.A.T.E. subscription order has been confirmed. Your personalised physical STEAM activity kit is being prepared for dispatch.',
+      path:        '/',
+      noIndex:     true,
+    })
     // Wire data-nav links in the confirmation shell
     document.querySelectorAll('[data-nav]').forEach(link => {
       link.addEventListener('click', e => {
@@ -1472,6 +1481,8 @@ function _hydrate(path) {
   }
 
   app.innerHTML = render(path, ctx)   // ONE innerHTML write
+  // Phase 11: inject route-appropriate metadata immediately after DOM write
+  SEOEngine.updateForRoute(route, ctx)
   init(path, ctx)                     // ALL inits after DOM written
 }
 
