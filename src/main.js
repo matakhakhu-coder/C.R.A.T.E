@@ -20,6 +20,9 @@ import { init as initTelemetryCollector } from '@/modules/TelemetryCollector.js'
 import * as ParentDashboard from '@/modules/ParentDashboard.js'
 // Phase 6: CrateRecommender computes 70/20/10 manifests and drives the POD pipeline.
 import { init as initCrateRecommender, generateCrateManifest } from '@/modules/CrateRecommender.js'
+// Phase 7: Subscription checkout surface and session confirmation receipt.
+import * as SubscriptionManager from '@/modules/SubscriptionManager.js'
+import * as SessionSummary       from '@/modules/SessionSummary.js'
 
 // ── DOM mount ─────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')
@@ -639,6 +642,12 @@ function render(path, ctx = {}) {
   }
 
   if (route === '/sandbox') return _renderSandbox()
+
+  // Phase 7: Subscription checkout surface
+  if (route === '/subscribe') {
+    const planParam = new URLSearchParams(window.location.search).get('plan') || null
+    return SubscriptionManager.render(planParam)
+  }
 
   if (route === '/admin') {
     return `
@@ -1357,9 +1366,13 @@ function init(path, ctx = {}) {
     })
   })
 
-  if (route === '/')         _initMarketingShell()
-  if (route === '/app')      _initApp(ctx)
-  if (route === '/sandbox')  _initSandbox()
+  if (route === '/')          _initMarketingShell()
+  if (route === '/app')       _initApp(ctx)
+  if (route === '/sandbox')   _initSandbox()
+  if (route === '/subscribe') {
+    const planParam = new URLSearchParams(window.location.search).get('plan') || null
+    SubscriptionManager.init(planParam)
+  }
 }
 
 // =============================================================================
@@ -1389,6 +1402,31 @@ function _sanitise(str) {
 // =============================================================================
 function _hydrate(path) {
   if (!app) { console.error('[CRATE] _hydrate — #app not found'); return }
+
+  // ── Phase 7: ?session=CR-XXXXXX — mountConfirmation() path ───────────────
+  // Overrides all pathname routing when a session parameter is present.
+  // Applies to hard redirects from SubscriptionManager checkout completion.
+  const _sessionRef = new URLSearchParams(window.location.search).get('session')
+  if (_sessionRef) {
+    if (_sandboxRAF) { cancelAnimationFrame(_sandboxRAF); _sandboxRAF = null; _flushSandboxSession() }
+    app.innerHTML = [
+      _renderNavbar(),
+      SessionSummary.render(_sessionRef),
+      _renderFooter(),
+    ].join('')
+    // Wire data-nav links in the confirmation shell
+    document.querySelectorAll('[data-nav]').forEach(link => {
+      link.addEventListener('click', e => {
+        e.preventDefault()
+        const href = link.getAttribute('href')
+        // Strip session param on SPA navigation away from confirmation
+        window.history.pushState({}, '', href)
+        _hydrate(href)
+      })
+    })
+    SessionSummary.init(_sessionRef)
+    return
+  }
 
   const route = path === '' ? '/' : path
 

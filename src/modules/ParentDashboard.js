@@ -249,6 +249,10 @@ export function render(profileData, manifest = null) {
              class="font-body text-cr-cream/50 text-xs hover:text-cr-cream transition-colors">
             Play Sandbox &rarr;
           </a>
+          <a href="/subscribe" data-nav
+             class="font-body text-cr-sage text-xs font-semibold hover:text-cr-cream transition-colors">
+            Subscribe &rarr;
+          </a>
           <a href="/" data-nav
              class="font-body text-cr-cream/35 text-xs hover:text-cr-cream/70 transition-colors">
             &#8592; Home
