@@ -97,7 +97,15 @@ async function _onSessionEnd(event) {
   }
 
   // ── Step 3: Persist to session history in localStorage ───────────────────
-  // This write is synchronous — safe to execute even on beforeunload.
+  // Phase 11.5: if a binary packet is present, store it in the binary ledger.
+  // JSON path retained as fallback and for Phase 4/8 backward compat.
+  if (event.detail?.compressedBuffer instanceof ArrayBuffer &&
+      event.detail.compressedBuffer.byteLength > 0) {
+    _appendBinaryHistory(pseudoUUID, event.detail.compressedBuffer)
+    console.log('[SIM] TelemetryCollector: binary packet stored —',
+      event.detail.compressedBuffer.byteLength, 'bytes')
+  }
+  // Always write JSON history for admin panel and backward compat
   _appendSessionHistory(pseudoUUID, sessionPayload)
 
   // ── Step 4: Upload to Database B via telemetry adapter ───────────────────
@@ -148,6 +156,25 @@ function _computeGAP(signals, sessionMs) {
 // =============================================================================
 // SESSION HISTORY PERSISTENCE
 // =============================================================================
+
+// ── _appendBinaryHistory(pseudoUUID, buffer) ──────────────────────────────────
+// Phase 11.5: stores a raw binary ArrayBuffer session packet in a localStorage
+// array as a Base64 string (IndexedDB not available in all contexts at load time).
+// Each entry is decoded by TelemetryCompressor.unpack() during ML ingestion.
+function _appendBinaryHistory(pseudoUUID, buffer) {
+  try {
+    const key     = `cr_binary_sessions_${pseudoUUID}`
+    const history = JSON.parse(localStorage.getItem(key) || '[]')
+    // Convert ArrayBuffer to Base64 for localStorage compatibility
+    const bytes   = new Uint8Array(buffer)
+    const b64     = btoa(String.fromCharCode(...bytes))
+    history.unshift({ ts: Date.now(), b64 })
+    if (history.length > 20) history.length = 20   // rolling cap
+    localStorage.setItem(key, JSON.stringify(history))
+  } catch (err) {
+    console.warn('[SIM] TelemetryCollector: binary history write failed:', err?.message)
+  }
+}
 
 // ── _appendSessionHistory(pseudoUUID, payload) ────────────────────────────────
 // Prepends the new session to the child's persistent history array in localStorage.

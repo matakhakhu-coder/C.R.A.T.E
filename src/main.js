@@ -27,6 +27,8 @@ import * as SessionSummary       from '@/modules/SessionSummary.js'
 import * as AdminShell from '@/admin/AdminShell.js'
 // Phase 11: SEO metadata engine — injected after every app.innerHTML write.
 import * as SEOEngine from '@/core/SEOEngine.js'
+// Phase 11.5: Binary telemetry packet serializer for sub-50KB payload compliance.
+import * as TelemetryCompressor from '@/core/TelemetryCompressor.js'
 
 // ── DOM mount ─────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')
@@ -47,7 +49,7 @@ let _sandboxRAF       = null
 // Active physics bodies array.
 let _sandboxBodies    = []
 // Dragging state.
-let _sandboxDrag      = null   // { body, offX, offY }
+let _sandboxDrag      = null   // { body, offsetX, offsetY }
 let _sandboxDragPrevX = 0
 let _sandboxDragPrevY = 0
 let _sandboxDragVX    = 0
@@ -63,9 +65,26 @@ let _sandboxCollapseMs = 0     // Time of last structural collapse
 // First-action tracking.
 let _sandboxFirstAct   = false // Has the child made their first action?
 // Drag timing for speed variability.
-let _sandboxDragLog    = []    // [{ startMs, endMs }] — last 10 drag events
+let _sandboxDragLog    = []    // [{ durationMs }] — last 10 drag events
 // Canvas bounds tracking for exploration breadth.
 let _sandboxTouchZones = new Set() // Grid cell strings 'cx,cy' touched
+
+// ── Phase 11.5 constructivist engine state ────────────────────────────────────
+let _sandboxGravity         = 0.35    // mutable; ZPD interpolates this each frame
+let _sandboxWindX           = 0       // ambient horizontal force vector
+let _sandboxRestitution     = 0.45    // mutable; ZPD interpolates this each frame
+let _zpdTier                = 1       // current tier index (0–3)
+let _zpdTargetGravity       = 0.35    // ZPD interpolation target
+let _zpdTargetRestitution   = 0.45    // ZPD interpolation target
+let _sandboxGhostType       = null    // shape type currently hovered in sidebar
+let _sandboxGhostX          = 0       // ghost wireframe center x
+let _sandboxGhostY          = 0       // ghost wireframe center y
+let _sandboxBodyPositionLog = []      // 2Hz coordinate samples [{ x, y }]
+let _nudgeCount             = 0       // pointer moves < 5px displacement
+let _grossMoveCount         = 0       // pointer moves >= 5px displacement
+let _envState               = { gravity: 0.35, windX: 0 }  // env snapshot for isolation check
+let _envIsoCount            = 0       // successful variable isolation events this session
+let _sandboxCurrentMaterial = 'wood'  // material selected in sidebar
 
 // ── Physics constants ─────────────────────────────────────────────────────────
 const _PHYS = Object.freeze({
@@ -99,7 +118,31 @@ const _SIG = Object.freeze({
   time_to_first_action:   'timeToFirstAction',
   optional_interaction:   'optionalInteractions',
   speed_variability:      'speedVariability',
+  // Phase 11.5 advanced metrics
+  materialEssences:       'creativeModifications',
+  nudgeRatio:             'backtrackingBehavior',
+  envVariableIsolation:   'sequencePaths',
 })
+
+// ── Phase 11.5: Material science presets ─────────────────────────────────────
+// rho = density (normalized, wood baseline = 600)
+// mu  = surface friction coefficient
+// restitution = per-body elasticity (overrides global _PHYS.RESTITUTION)
+const _MATERIALS = Object.freeze({
+  wood:   Object.freeze({ rho: 600,  mu: 0.40, restitution: 0.30, label: 'Wood'   }),
+  iron:   Object.freeze({ rho: 7800, mu: 0.60, restitution: 0.10, label: 'Iron'   }),
+  ice:    Object.freeze({ rho: 920,  mu: 0.02, restitution: 0.20, label: 'Ice'    }),
+  rubber: Object.freeze({ rho: 1100, mu: 0.80, restitution: 0.80, label: 'Rubber' }),
+})
+
+// ── Phase 11.5: Zone of Proximal Development physics tiers ────────────────────
+// tier 0 = exploration (softer); tier 3 = advanced (challenging)
+const _ZPD_TIERS = Object.freeze([
+  Object.freeze({ gravity: 0.25, restitution: 0.65, groundFriction: 0.975 }),
+  Object.freeze({ gravity: 0.35, restitution: 0.45, groundFriction: 0.985 }),
+  Object.freeze({ gravity: 0.45, restitution: 0.35, groundFriction: 0.992 }),
+  Object.freeze({ gravity: 0.55, restitution: 0.25, groundFriction: 0.997 }),
+])
 
 // =============================================================================
 // PHASE 1 RENDER HELPERS
@@ -548,7 +591,7 @@ function _renderSandbox() {
   ]
 
   const spawnBtns = shapes.map(s => `
-    <button data-spawn="${s.type}"
+    <button data-spawn="${s.type}" data-ghost="${s.type}"
             class="w-full flex flex-col items-center gap-1 py-2.5 px-1 rounded-xl
                    bg-cr-charcoal/60 hover:bg-cr-charcoal border border-cr-cream/5
                    hover:border-cr-sage/20 text-cr-cream/60 hover:text-cr-cream
@@ -600,6 +643,38 @@ function _renderSandbox() {
 
         <!-- Divider -->
         <div class="h-px bg-cr-sage/10 my-0.5"></div>
+
+        <!-- Material selector (Phase 11.5) -->
+        <select data-material-select
+                title="Shape material"
+                class="w-full bg-cr-slate border border-cr-charcoal/60 text-cr-cream/60
+                       font-body text-[10px] rounded-lg px-1 py-1.5 outline-none
+                       hover:border-cr-sage/30 focus:border-cr-sage transition-colors
+                       cursor-pointer">
+          <option value="wood">Wood</option>
+          <option value="iron">Iron</option>
+          <option value="ice">Ice</option>
+          <option value="rubber">Rubber</option>
+        </select>
+
+        <!-- Wind direction controls (Phase 11.5 — fires envVariableIsolation) -->
+        <div class="flex gap-0.5 w-full">
+          <button data-wind="-0.04" title="Wind left"
+                  class="flex-1 py-1.5 rounded-lg bg-cr-charcoal/60 hover:bg-cr-charcoal
+                         border border-cr-cream/5 hover:border-cr-sage/20
+                         text-cr-cream/50 hover:text-cr-cream font-body text-xs
+                         transition-all duration-200">&#8592;</button>
+          <button data-wind="0" title="No wind"
+                  class="flex-1 py-1.5 rounded-lg bg-cr-charcoal/60 hover:bg-cr-charcoal
+                         border border-cr-cream/5 hover:border-cr-sage/20
+                         text-cr-cream/50 hover:text-cr-cream font-body text-[10px]
+                         transition-all duration-200">&#9632;</button>
+          <button data-wind="0.04" title="Wind right"
+                  class="flex-1 py-1.5 rounded-lg bg-cr-charcoal/60 hover:bg-cr-charcoal
+                         border border-cr-cream/5 hover:border-cr-sage/20
+                         text-cr-cream/50 hover:text-cr-cream font-body text-xs
+                         transition-all duration-200">&#8594;</button>
+        </div>
 
         <!-- Return to portal -->
         <a href="/app" data-nav
@@ -895,6 +970,12 @@ function _initSandbox() {
   _sandboxCollapseMs = 0
   _sandboxDragLog    = []
   _sandboxTouchZones = new Set()
+  // Phase 11.5: reset constructivist state
+  _nudgeCount             = 0
+  _grossMoveCount         = 0
+  _envIsoCount            = 0
+  _envState               = { gravity: _sandboxGravity, windX: _sandboxWindX }
+  _sandboxBodyPositionLog = []
 
   // Spawn 3 starter blocks so the canvas feels alive immediately
   const theme = _THEMES[_sandboxTheme]
@@ -924,14 +1005,17 @@ function _initSandbox() {
     }
 
     if (body) {
-      _sandboxDrag      = { body }
+      _sandboxDrag      = {
+        body,
+        offsetX: x - body.x,   // Phase 11.5: off-center torque arm
+        offsetY: y - body.y,
+      }
       _sandboxDragPrevX = x
       _sandboxDragPrevY = y
       _sandboxDragVX    = 0
       _sandboxDragVY    = 0
       body.vx = 0; body.vy = 0
-      const dragStart = Date.now()
-      body._dragStart = dragStart
+      body._dragStart = Date.now()
     }
 
     _trackExplorationZone(x, y, canvas.width, canvas.height)
@@ -940,17 +1024,41 @@ function _initSandbox() {
   function _onPointerMove(e) {
     if (!_sandboxDrag) return
     const { x, y } = _ptFrom(e)
-    const body = _sandboxDrag.body
-    _sandboxDragVX = (x - _sandboxDragPrevX) * 0.8
-    _sandboxDragVY = (y - _sandboxDragPrevY) * 0.8
+    const body  = _sandboxDrag.body
+    const prevX = _sandboxDragPrevX
+    const prevY = _sandboxDragPrevY
+    _sandboxDragVX = (x - prevX) * 0.8
+    _sandboxDragVY = (y - prevY) * 0.8
     body.x = x; body.y = y
     _sandboxDragPrevX = x; _sandboxDragPrevY = y
     _trackExplorationZone(x, y, canvas.width, canvas.height)
+
+    // Phase 11.5: Off-center torque — angular impulse from drag arm
+    if (_sandboxDrag.offsetX !== undefined) {
+      const I = body.mass * (body.width * body.width + body.height * body.height) / 12
+      const tau = _sandboxDrag.offsetX * _sandboxDragVY - _sandboxDrag.offsetY * _sandboxDragVX
+      body.angularVelocity += (tau / Math.max(I, 0.001)) * 0.008
+    }
 
     // Rotation: holding Shift adds angular velocity during drag
     if (e.shiftKey || e.ctrlKey) {
       body.angularVelocity += (Math.random() - 0.5) * 0.08
       _debouncedSignal('spatial_rotation', { value: body.angularVelocity, x, y })
+    }
+
+    // Phase 11.5: Nudge Ratio tracking
+    const moveDelta = Math.sqrt(
+      (x - prevX) * (x - prevX) +
+      (y - prevY) * (y - prevY)
+    )
+    if (moveDelta < 5) {
+      _nudgeCount++
+    } else {
+      _grossMoveCount++
+      if (_grossMoveCount > 0 && _grossMoveCount % 10 === 0) {
+        const nRatio = _nudgeCount / _grossMoveCount
+        _debouncedSignal('nudgeRatio', { value: nRatio, nudges: _nudgeCount, gross: _grossMoveCount })
+      }
     }
   }
 
@@ -981,15 +1089,47 @@ function _initSandbox() {
 
   // ── Sidebar button wiring ─────────────────────────────────────────────────
 
-  // Spawn buttons
+  // Phase 11.5: Ghost wireframe hover state
+  document.querySelectorAll('[data-ghost]').forEach(btn => {
+    btn.addEventListener('mouseenter', () => { _sandboxGhostType = btn.getAttribute('data-ghost') })
+    btn.addEventListener('mouseleave', () => { _sandboxGhostType = null })
+  })
+  // Ghost follows canvas pointer
+  canvas.addEventListener('mousemove', e => {
+    _sandboxGhostX = e.offsetX
+    _sandboxGhostY = e.offsetY
+  })
+
+  // Spawn buttons — Phase 11.5: pass current material selection
   document.querySelectorAll('[data-spawn]').forEach(btn => {
     btn.addEventListener('click', () => {
       const type  = btn.getAttribute('data-spawn')
       const theme = _THEMES[_sandboxTheme]
       const color = theme.palette[Math.floor(Math.random() * theme.palette.length)]
-      _spawnBody(type, color, canvas.width, canvas.height)
+      _spawnBody(type, color, canvas.width, canvas.height, _sandboxCurrentMaterial)
+      _sandboxGhostType = null
       _debouncedSignal('novelty_exploration', { type, x: canvas.width / 2, y: 60 })
-      console.log('[SIM] sandbox — novelty_exploration: spawned', type)
+      console.log('[SIM] sandbox — novelty_exploration: spawned', type, 'material:', _sandboxCurrentMaterial)
+    })
+  })
+
+  // Phase 11.5: Material selector
+  const materialSel = document.querySelector('[data-material-select]')
+  if (materialSel) {
+    materialSel.value = _sandboxCurrentMaterial
+    materialSel.addEventListener('change', () => {
+      _sandboxCurrentMaterial = materialSel.value
+      console.log('[SIM] sandbox — material changed to:', _sandboxCurrentMaterial)
+    })
+  }
+
+  // Phase 11.5: Wind controls — fire envVariableIsolation signal
+  document.querySelectorAll('[data-wind]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newWind = parseFloat(btn.getAttribute('data-wind'))
+      _checkEnvVariableIsolation(_sandboxGravity, newWind)
+      _sandboxWindX = newWind
+      console.log('[SIM] sandbox — wind set to:', newWind)
     })
   })
 
@@ -1020,14 +1160,31 @@ function _initSandbox() {
     })
   }
 
+  // ── ZPD listener — smooth physics tier transitions ────────────────────────
+  document.addEventListener('cr:zpdShift', e => {
+    const { direction } = e.detail || {}
+    if (direction === 'challenge' && _zpdTier < 3) _zpdTier++
+    if (direction === 'soften'    && _zpdTier > 0) _zpdTier--
+    const target             = _ZPD_TIERS[_zpdTier]
+    _zpdTargetGravity        = target.gravity
+    _zpdTargetRestitution    = target.restitution
+    console.log('[CRATE] sandbox — ZPD tier shift →', _zpdTier, direction)
+  })
+
   // ── Game loop ─────────────────────────────────────────────────────────────
-  let _prevTime = performance.now()
+  let _prevTime  = performance.now()
+  let _frameCount = 0
 
   function _gameLoop(now) {
     _sandboxRAF = requestAnimationFrame(_gameLoop)
 
     const dt = Math.min((now - _prevTime) / 16, 3) // capped delta, ~1 at 60fps
     _prevTime = now
+    _frameCount++
+
+    // Phase 11.5: Smooth ZPD physics interpolation (2% convergence per frame ≈ 50 frames)
+    _sandboxGravity     += (_zpdTargetGravity     - _sandboxGravity    ) * 0.02
+    _sandboxRestitution += (_zpdTargetRestitution - _sandboxRestitution) * 0.02
 
     const W = canvas.width, H = canvas.height
 
@@ -1045,14 +1202,26 @@ function _initSandbox() {
     // Periodic telemetry checks
     _checkStructuralPersistence()
     _checkToolUtilization()
+
+    // Phase 11.5: Sample body position at 2Hz (every 30 frames at 60fps)
+    if (_frameCount % 30 === 0 && _sandboxBodies.length > 0) {
+      _sandboxBodyPositionLog.push({ x: _sandboxBodies[0].x, y: _sandboxBodies[0].y })
+      if (_sandboxBodyPositionLog.length > 200) _sandboxBodyPositionLog.shift()
+    }
+    // Phase 11.5: Material Essences metric — checked every 60 frames (~1s)
+    if (_frameCount % 60 === 0) _checkMaterialEssences(W, H)
   }
 
   _sandboxRAF = requestAnimationFrame(_gameLoop)
 }
 
 // ── Physics: single body step ─────────────────────────────────────────────────
+// Phase 11.5: reads _sandboxGravity and _sandboxWindX (ZPD-controlled mutable values)
+// and uses per-body restitution and mu instead of global constants.
 function _physStep(b, W, H) {
-  b.vy += _PHYS.GRAVITY
+  // Phase 11.5: gravity and wind read from mutable module state (ZPD-controlled)
+  b.vy += _sandboxGravity
+  b.vx += _sandboxWindX
   b.x  += b.vx
   b.y  += b.vy
   b.angle += b.angularVelocity
@@ -1060,18 +1229,21 @@ function _physStep(b, W, H) {
 
   const hw = b.width / 2, hh = b.height / 2
 
-  // Floor
+  // Floor — Phase 11.5: per-body restitution and mu
   if (b.y + hh >= H - 8) {
     b.y  = H - 8 - hh
-    b.vy = b.vy < 0 ? b.vy : -Math.abs(b.vy) * _PHYS.RESTITUTION
-    b.vx *= _PHYS.GROUND_FRICTION
+    const bodyRest = b.restitution ?? _sandboxRestitution
+    b.vy = b.vy < 0 ? b.vy : -Math.abs(b.vy) * bodyRest
+    // mu modulates ground friction: low mu (ice) = almost no deceleration
+    b.vx *= (_PHYS.GROUND_FRICTION * (1 - (b.mu ?? 0.4) * 0.05))
     if (Math.abs(b.vy) < 0.6) b.vy = 0
     b.onGround = true
     b.angularVelocity *= 0.85
   } else { b.onGround = false }
 
   // Ceiling
-  if (b.y - hh <= 0) { b.y = hh; b.vy = Math.abs(b.vy) * _PHYS.RESTITUTION }
+  const bodyRest = b.restitution ?? _sandboxRestitution
+  if (b.y - hh <= 0) { b.y = hh; b.vy = Math.abs(b.vy) * bodyRest }
 
   // Left wall
   if (b.x - hw <= 0) {
@@ -1198,13 +1370,41 @@ function _physDraw(ctx, bodies, W, H) {
     ctx.fillText('Tap a shape on the right to start building', W / 2, H / 2)
     ctx.textAlign = 'left'
   }
+
+  // Phase 11.5: Ghost wireframe — placement shadow when sidebar shape is hovered
+  if (_sandboxGhostType) {
+    const dims = { rect: [58, 38], triangle: [54, 54], wedge: [64, 44], lever: [118, 16] }
+    const [gw, gh] = dims[_sandboxGhostType] || dims.rect
+    ctx.save()
+    ctx.globalAlpha = 0.28
+    ctx.strokeStyle = 'rgba(244,241,222,0.85)'
+    ctx.lineWidth   = 1.5
+    ctx.setLineDash([5, 4])
+    ctx.translate(_sandboxGhostX, _sandboxGhostY)
+    ctx.beginPath()
+    if (_sandboxGhostType === 'rect' || _sandboxGhostType === 'lever') {
+      ctx.rect(-gw / 2, -gh / 2, gw, gh)
+    } else if (_sandboxGhostType === 'triangle') {
+      ctx.moveTo(0, -gh / 2); ctx.lineTo(gw / 2, gh / 2); ctx.lineTo(-gw / 2, gh / 2)
+      ctx.closePath()
+    } else if (_sandboxGhostType === 'wedge') {
+      ctx.moveTo(-gw / 2, gh / 2); ctx.lineTo(gw / 2, gh / 2); ctx.lineTo(-gw / 2, -gh / 2)
+      ctx.closePath()
+    }
+    ctx.stroke()
+    ctx.restore()
+  }
 }
 
 // ── Spawn a new physics body ──────────────────────────────────────────────────
-function _spawnBody(type, color, W, H) {
+// ── Spawn a new physics body ──────────────────────────────────────────────────
+// material: preset name from _MATERIALS ('wood'|'iron'|'ice'|'rubber')
+// mass scales with density relative to wood baseline (rho=600)
+function _spawnBody(type, color, W, H, material = 'wood') {
   const dims = { rect: [58, 38], triangle: [54, 54], wedge: [64, 44], lever: [118, 16] }
   const [w, h] = dims[type] || dims.rect
-  const x = W / 2 + (Math.random() - 0.5) * W * 0.4
+  const x   = W / 2 + (Math.random() - 0.5) * W * 0.4
+  const mat = _MATERIALS[material] || _MATERIALS.wood
   _sandboxBodies.push({
     id:              `b-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     x,  y:           -h,   // spawn above canvas, falls in
@@ -1214,7 +1414,13 @@ function _spawnBody(type, color, W, H) {
     type,   color,
     angle:           (Math.random() - 0.5) * 0.3,
     angularVelocity: (Math.random() - 0.5) * 0.04,
-    mass:            (w * h) / 2500,
+    // Phase 11.5: mass scales with material density
+    mass:            (w * h) / 2500 * (mat.rho / 600),
+    // Phase 11.5: per-body material properties
+    material,
+    rho:             mat.rho,
+    mu:              mat.mu,
+    restitution:     mat.restitution,
     onGround:        false,
   })
 }
@@ -1286,6 +1492,38 @@ function _checkSpeedVariability() {
   if (stdDev > 300) console.log('[SIM] sandbox — speedVariability stdDev:', stdDev.toFixed(0), 'ms')
 }
 
+// ── Phase 11.5: Material Essences metric (M_e) ───────────────────────────────
+// M_e = Σ (μᵢ × ρᵢ) / (hᵢ + 1)
+// hᵢ = normalized height above floor; high M_e = complex grounded material stacking.
+function _checkMaterialEssences(W, H) {
+  if (_sandboxBodies.length === 0) return
+  let sum = 0
+  for (const b of _sandboxBodies) {
+    const hi  = Math.max((H - b.y - b.height / 2) / H, 0)
+    const mu  = b.mu  ?? 0.4
+    const rho = b.rho ?? 600
+    sum += (mu * rho) / (hi + 1)
+  }
+  const me = sum / _sandboxBodies.length
+  _debouncedSignal('materialEssences', { value: me, bodyCount: _sandboxBodies.length })
+}
+
+// ── Phase 11.5: Environmental Variable Isolation check ───────────────────────
+// Fires when exactly one of gravity/wind changes (XOR) — variable isolation achieved.
+function _checkEnvVariableIsolation(newGravity, newWindX) {
+  const gravityChanged = (newGravity !== _envState.gravity)
+  const windChanged    = (newWindX   !== _envState.windX)
+  if (gravityChanged !== windChanged) {   // XOR: exactly one changed
+    _envIsoCount++
+    _debouncedSignal('envVariableIsolation', {
+      isolatedParam: gravityChanged ? 'gravity' : 'wind',
+      isoCount:      _envIsoCount,
+    })
+    console.log('[SIM] sandbox — envVariableIsolation: isolated', gravityChanged ? 'gravity' : 'wind')
+  }
+  _envState = { gravity: newGravity, windX: newWindX }
+}
+
 // ── Debounced signal fire: max 1 per signal type per 2 seconds ────────────────
 function _debouncedSignal(name, data) {
   const now = Date.now()
@@ -1302,13 +1540,9 @@ function _bufferSignal(sandboxName, data) {
 }
 
 // ── Flush buffered signals — dispatches cr:sessionEnd for Phase 4 pipeline ───
-// Phase 4 architecture: this function no longer calls uploadSessionData directly.
-// It dispatches cr:sessionEnd with the full session payload.
-// TelemetryCollector._onSessionEnd() receives it and runs the full pipeline:
-//   GAP computation → localStorage history → uploadSessionData → AssessmentEngine
-//
-// Deficit fix: directive used cr_parent_token as pseudoUUID — that is the auth
-// token (PII-adjacent). Correct anonymous identifier is cr_child_uuid per CLAUDE.md.
+// Phase 11.5: builds binary compressed buffer via TelemetryCompressor and
+// attaches it as compressedBuffer field in event detail for bandwidth-efficient
+// storage and upload in TelemetryCollector.
 function _flushSandboxSession() {
   const keys = Object.keys(_sandboxSigBuffer)
   if (keys.length === 0) return
@@ -1318,19 +1552,42 @@ function _flushSandboxSession() {
   const sessionMs  = Date.now() - _sandboxSessionMs
   const sessionId  = `cr-sandbox-${Date.now()}`
 
+  // Phase 11.5: Pack session into binary ArrayBuffer
+  let compressedBuffer = null
+  try {
+    compressedBuffer = TelemetryCompressor.pack(
+      signals,
+      [..._sandboxBodyPositionLog],   // snapshot of coordinate log
+      {
+        sessionMs,
+        sessionStartMs: _sandboxSessionMs,
+        bodyCount:      _sandboxBodies.length,
+        gapMetric:      0,   // TelemetryCollector.js computes final GAP from signals
+        pseudoUUID,
+      },
+    )
+    const estimate = TelemetryCompressor.estimatePackedSize(signals, _sandboxBodyPositionLog.length)
+    console.log('[SIM] sandbox — TelemetryCompressor packed:', compressedBuffer.byteLength,
+      'bytes | estimated:', estimate, 'bytes | under 50KB:', compressedBuffer.byteLength < 51200)
+  } catch (err) {
+    console.warn('[SIM] sandbox — TelemetryCompressor.pack failed, JSON fallback active:', err?.message)
+  }
+
   // Dispatch cr:sessionEnd — TelemetryCollector handles the rest
   document.dispatchEvent(new CustomEvent('cr:sessionEnd', {
     detail: {
       pseudoUUID,
-      signals,
+      signals,             // JSON signals retained for Phase 4 backward compat
       sessionMs,
-      bodyCount: _sandboxBodies.length,
+      bodyCount:           _sandboxBodies.length,
       sessionId,
+      compressedBuffer,    // Phase 11.5: binary packet (null if compressor failed)
     },
   }))
 
   console.log('[SIM] sandbox — cr:sessionEnd dispatched · signals:', JSON.stringify(signals))
-  _sandboxSigBuffer = {}
+  _sandboxSigBuffer        = {}
+  _sandboxBodyPositionLog  = []
 }
 
 // =============================================================================

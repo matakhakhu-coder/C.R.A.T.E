@@ -33,6 +33,24 @@ export async function uploadSessionData(sessionRecord) {
     }
   }
 
+  // Phase 11.5: if a binary packet is present, route via octet-stream endpoint
+  // for maximum bandwidth efficiency. Falls back to JSON if buffer is absent.
+  if (sessionRecord.compressedBuffer instanceof ArrayBuffer &&
+      sessionRecord.compressedBuffer.byteLength > 0) {
+    const res = await fetch(`${BRAND.integrations.telemetry.connectionString}/sessions/binary`, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Session-UUID':    sessionRecord.pseudoUUID || '',
+        'X-Session-ID':      sessionRecord.sessionId  || '',
+      },
+      body: sessionRecord.compressedBuffer,
+    })
+    if (!res.ok) throw new Error(`telemetry.uploadSessionData (binary): ${res.status}`)
+    return res.json()
+  }
+
+  // JSON fallback path
   const res = await fetch(`${BRAND.integrations.telemetry.connectionString}/sessions`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -105,6 +105,12 @@ export function processTelemetry(pseudoUUID, sessionSignals, gapMetric = 0) {
 
   _saveProfile(pseudoUUID, updatedProfile)
 
+  // ── Phase 11.5: ZPD scaffolding check ─────────────────────────────────────
+  // Runs after the 3rd session to have a meaningful comparison baseline.
+  if (sessionCount >= 3) {
+    _checkZpdState(pseudoUUID, updatedProfile, existing)
+  }
+
   // ── Wheel-spin detection ───────────────────────────────────────────────────
   // Fires when a child has retried the same challenge without structural
   // variation beyond the threshold defined in assessmentTables.js.
@@ -225,4 +231,65 @@ function _saveProfile(pseudoUUID, profile) {
   localStorage.setItem(_profileKey(pseudoUUID), json)
   // Legacy key for Phase 5 dashboard backward compatibility
   localStorage.setItem('cr_sim_profile', json)
+}
+
+// =============================================================================
+// PHASE 11.5: ZPD SCAFFOLDING STATE CHECK
+// =============================================================================
+
+// ── _checkZpdState(pseudoUUID, current, previous) ────────────────────────────
+// Evaluates longitudinal progress across all 6 activity interest areas.
+// Dispatches cr:zpdShift to signal the sandbox engine to adjust physics tier.
+//
+// Mastery milestone: any dimension advances to 'established' this session.
+// Learning plateau:  >50% of dimensions show <3% posterior change this session.
+//
+// HPCSA guardrail: All terminology is play-engagement framed.
+//   No clinical, deficit, or milestone terminology used anywhere here.
+function _checkZpdState(pseudoUUID, current, previous) {
+  if (!previous?.dimensions || !current?.dimensions) return
+
+  let plateauCount   = 0
+  let milestoneCount = 0
+  const dimCount     = Object.keys(current.dimensions).length
+
+  for (const dimKey of Object.keys(current.dimensions)) {
+    const curDim  = current.dimensions[dimKey]
+    const prevDim = previous.dimensions?.[dimKey]
+
+    // Mastery milestone: state advanced to established this session
+    if (curDim?.state === 'established' && prevDim?.state !== 'established') {
+      milestoneCount++
+    }
+
+    // Plateau: established posterior delta < 3% between sessions
+    const curEst  = curDim?.posteriors?.established  ?? 0
+    const prevEst = prevDim?.posteriors?.established ?? 0
+    if (Math.abs(curEst - prevEst) < 0.03) plateauCount++
+  }
+
+  const plateauRatio = dimCount > 0 ? plateauCount / dimCount : 0
+
+  if (milestoneCount > 0) {
+    document.dispatchEvent(new CustomEvent('cr:zpdShift', {
+      detail: {
+        direction:      'challenge',
+        reason:         'mastery',
+        milestoneCount,
+        pseudoUUID,
+      },
+    }))
+    console.log('[SIM] AssessmentEngine: cr:zpdShift — direction: challenge, milestones:', milestoneCount)
+
+  } else if (plateauRatio > 0.5) {
+    document.dispatchEvent(new CustomEvent('cr:zpdShift', {
+      detail: {
+        direction:    'soften',
+        reason:       'plateau',
+        plateauRatio,
+        pseudoUUID,
+      },
+    }))
+    console.log('[SIM] AssessmentEngine: cr:zpdShift — direction: soften, plateau ratio:', plateauRatio.toFixed(2))
+  }
 }
