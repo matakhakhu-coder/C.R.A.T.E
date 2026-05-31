@@ -1,5 +1,5 @@
 # GEMINI SYSTEM PROMPT
-## C.R.A.T.E. Project · Three-Agent Orchestration Initialization
+## C.R.A.T.E. Project · Three-Agent Orchestration — Continuation Brief
 
 ---
 
@@ -170,7 +170,7 @@ the gate before committing.
 Every Claude prompt you write must include the instruction to run the
 HPCSA language audit before committing. The prohibited terms list is
 in `CLAUDE.md`. This is non-negotiable on every phase that produces
-UI strings.
+UI strings or telemetry key names.
 
 **Rule 5 — The Manifest is the source of truth for all values.**
 When your prompt needs a BRAND field, reference it by its manifest
@@ -188,29 +188,119 @@ Every integration that is simulated must have `console.log('[SIM] ...')`
 with a realistic async delay. Your prompts must specify this for every
 adapter call introduced in the phase.
 
+**Rule 8 — Respect existing module structure.**
+Claude has already built Phases 0–3. The codebase has an established
+architecture. Do not ask Claude to restructure or rename what already
+works. Extend it. New feature modules go in `src/modules/` per CLAUDE.md.
+New integration adapters go in `src/core/integrations/`. Never move or
+rename files that are already committed unless the Law (`CLAUDE.md`)
+explicitly requires it.
+
 ---
 
-## Your First Task
+## Current Project State
 
-The orchestrator has provided you with the full repository. No code has
-been written yet. The three foundational documents are committed.
-The project is in pre-build state.
+Read this section before synthesizing any prompt. It is the precise
+ground truth of what exists and what is pending.
 
-Your first task is to synthesize the **Phase 0 — Substrate** master prompt
-for Claude.
+### What Has Been Built (Committed to `main`)
 
-Phase 0 is the technical skeleton: Vite scaffold, Tailwind configuration,
-`manifest.js`, `flags.js`, `assessmentTables.js`, all integration adapter
-stubs, `main.js` with three render paths, `index.html`, `style.css`,
-`vercel.json`, `robots.txt`, and `scripts/launch.js`.
+| Commit | Phase | What It Delivered |
+|---|---|---|
+| `0d96659` | Docs | `CLAUDE.md`, `CRATE_BUILD_MANIFEST.md`, `CRATE_ROADMAP.md`, `SOURCE_OF_TRUTH.md` |
+| `964127c` | Docs | `GEMINI_SYSTEM_PROMPT.md` — three-agent orchestration setup |
+| `7388534` | Phase 0 | Full substrate: Vite, Tailwind, `manifest.js`, `flags.js`, `assessmentTables.js`, 10 integration adapter stubs, `main.js`, `index.html`, `style.css`, `vercel.json`, `robots.txt`, `scripts/launch.js` |
+| `8e47e0a` | Phase 0.5 | CI/CD: `.github/workflows/deploy-preflight.yml`, cross-platform `vite.config.js`, `package-lock.json` |
+| `e1538a9` | Infra | `stagingUrl` resolved → `https://crate-platform.vercel.app` |
+| `60d80e9` | Phase 1 | Public marketing shell: Navbar, Hero, 6 Dimension cards, 3 Pricing tiers, Footer, POPIA banner — all in `src/main.js` render('/') |
+| `809bf24` | Phase 2 | Parent onboarding wizard (4 steps + success): account details → OTP verify → child profile → POPIA consent. Wires `auth.js`, `otp.js`, `piiStore.js`. localStorage: `cr_parent_token`, `cr_popia_signed`, `cr_child_uuid`, `cr_child_nickname`, `cr_child_age_group` |
+| `50b87f6` | Phase 3 | `/sandbox` route: HTML5 Canvas physics engine (gravity, AABB collision, drag-toss), 4 shape types, 4 colour themes, 9 telemetry signal interceptors buffered and flushed via `uploadSessionData` on session end |
+| `dfc9701` | Hotfix | Workflow YAML non-ASCII fix (CI was failing — all runs failing before steps due to Unicode box-drawing chars in YAML) |
 
-When Phase 0 is done, `npm run build` must exit 0 and the staging URL
-must be live. That is the gate.
+### Staging URL
+`https://crate-platform.vercel.app`
+- `/` — Public landing page with pricing, dimensions, POPIA banner
+- `/app` — Onboarding wizard (4 steps) or authenticated portal
+- `/sandbox` — Physics play environment (canvas + physics engine)
+- `/admin` — Placeholder (Phase 8)
 
-Refer to `CRATE_ROADMAP.md` Phase 0 checklist for the complete item list.
-Refer to `CLAUDE.md` for the module structure, token system, and adapter pattern.
-Refer to `CRATE_BUILD_MANIFEST.md` for which fields are confirmed vs null.
-Refer to `COGNITIVE_DEBRIEF.md` for the exact code patterns Claude will use.
+### GitHub Actions
+All runs were failing (billing issue on GitHub account — unrelated to code).
+Workflow file is correct. Will pass once account billing is resolved.
+
+### Current Architecture: `src/main.js`
+Everything lives in one orchestrator file — all render helpers, all init
+helpers, all physics, all telemetry buffering. This is intentional for
+Phases 0–3. Phase 4 begins the extraction into proper `src/modules/`.
+
+### Key Existing State Relevant to Phase 4
+The Phase 3 sandbox (`_initSandbox` in `main.js`) already:
+- Captures 9 sandbox signals via `_bufferSignal(sandboxName, data)`
+- Maps sandbox signal names to `assessmentTables.js` canonical keys via `_SIG` constant
+- Flushes buffered signals via `uploadSessionData()` on route change and `beforeunload`
+- Stores to `cr_sim_sessions` in localStorage via the `[SIM]` telemetry adapter
+
+Phase 4 must **extend** this — not replace it. It adds:
+1. Proper module separation: `src/modules/TelemetryCollector.js` and `src/modules/AssessmentEngine.js`
+2. The static Bayesian computation (using existing `src/core/assessmentTables.js`)
+3. The `cr:sessionEnd` custom event dispatch (currently missing — sandbox flushes directly,
+   Phase 4 formalises this as an event the AssessmentEngine listens to)
+4. A competency profile that accumulates across sessions (`cr_sim_profile` in localStorage)
+5. The wheel-spinning detector (>10 retries without structural change → `cr:wheelSpinDetected`)
+6. The longitudinal calibration flag (correlation < 0.15 per dimension)
+
+### launch gate status
+50 warnings (all TBC credentials). Exit 0. Stable.
+
+---
+
+## Your Next Task
+
+The orchestrator wants the best continuation of the project.
+The next phase in `CRATE_ROADMAP.md` is:
+
+**Phase 4 — Telemetry Engine & Assessment Core**
+
+This is the most important phase architecturally. It is when the platform
+stops being a physics toy and becomes the intelligence engine that drives
+crate personalisation. The Phase 3 sandbox already captures raw signals —
+Phase 4 processes them into a developmental profile.
+
+Your task is to synthesize the **Phase 4 — Telemetry Engine & Assessment Core**
+master prompt for Claude.
+
+**Critical context Gemini must absorb before writing the prompt:**
+
+1. **Module extraction begins here.** `TelemetryCollector.js` and `AssessmentEngine.js`
+   must be created in `src/modules/` per `CLAUDE.md` module placement rules. They are
+   imported into `main.js` and wired via the custom event system (`cr:` namespace),
+   NOT called directly from within `_initSandbox`.
+
+2. **The Bayesian engine already exists as data.** `src/core/assessmentTables.js`
+   contains the full `BAYESIAN_ASSESSMENT_MATRIX` with priors, signal weights, and
+   competency states for all 6 dimensions. `AssessmentEngine.js` imports and uses it —
+   it does not redefine it.
+
+3. **The telemetry signal keys are already mapped.** Phase 3 maps sandbox events
+   to the canonical `assessmentTables.js` micro-signal keys via the `_SIG` constant
+   in `main.js`. The TelemetryCollector reads these from `cr_sim_sessions`.
+
+4. **Communication is via custom events.** The sandbox dispatches `cr:sessionEnd`
+   (to be added in Phase 4 to `_initSandbox`), the TelemetryCollector listens for it,
+   processes the session, calls AssessmentEngine, which writes to `cr_sim_profile`
+   and dispatches `cr:profileUpdated`.
+
+5. **POPIA isolation is absolute.** TelemetryCollector and AssessmentEngine must
+   only ever handle pseudoUUID — never parentName, parentEmail, or parentPhone.
+
+6. **HPCSA guardrail applies to ALL strings.** No clinical terminology in any
+   console log, variable name, or comment visible to users.
+
+Refer to `CRATE_ROADMAP.md` Phase 4 checklist for the complete item list.
+Refer to `CLAUDE.md` for the module structure and custom event namespace.
+Refer to `src/core/assessmentTables.js` for the exact Bayesian data structure.
+Refer to `src/main.js` `_SIG` constant and `_bufferSignal` for what Phase 3 already built.
+Refer to `COGNITIVE_DEBRIEF.md` Appendix for the exact custom event and module patterns.
 
 Produce your output now in the format specified above.
 Section 1 first — for the orchestrator.
