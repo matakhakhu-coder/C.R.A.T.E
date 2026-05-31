@@ -279,6 +279,35 @@ export function render(profileData, manifest = null) {
           ${_renderDashboardContent(profileData, manifest)}
         </div>
 
+        <!-- ── Reset Play Profile (demo / fresh-start utility) ───────────────── -->
+        <div class="mt-6 pt-5 border-t border-cr-charcoal">
+          <h3 class="font-body text-cr-cream/40 text-xs uppercase tracking-widest font-semibold mb-3">
+            Play Data
+          </h3>
+          <div class="bg-cr-charcoal rounded-2xl border border-cr-charcoal/60 p-5
+                      flex flex-col sm:flex-row sm:items-center gap-4">
+            <div class="flex-1">
+              <p class="font-body text-cr-cream/55 text-sm leading-relaxed mb-0.5">
+                Reset your builder's play profile and session history.
+              </p>
+              <p class="font-body text-cr-cream/30 text-xs leading-relaxed">
+                Your account details and subscription remain active.
+                Only the play trajectory data is cleared.
+              </p>
+            </div>
+            <button id="cr-reset-profile-btn"
+                    class="font-body text-cr-cream/60 text-sm font-medium
+                           border border-cr-charcoal/80 hover:border-cr-cream/30
+                           rounded-xl px-4 py-2.5 min-h-[44px]
+                           hover:bg-cr-charcoal/80 transition-all duration-200
+                           flex-shrink-0
+                           focus-visible:outline-none focus-visible:ring-2
+                           focus-visible:ring-cr-cream/30">
+              Reset Play Profile
+            </button>
+          </div>
+        </div>
+
         <!-- ── POPIA Data Management Zone ──────────────────────────────────── -->
         <!-- Architecturally isolated from profile display above.               -->
         <!-- Never cross-references PII fields with play trajectory data.       -->
@@ -339,6 +368,9 @@ export function init(profileData) {
     console.log('[CRATE] ParentDashboard: cr:crateReady listener active')
   }
 
+  // ── Wire profile reset (play data only — account intact) ─────────────────
+  _initProfileReset()
+
   // ── Wire deletion CTA ─────────────────────────────────────────────────────
   _initDeleteCTA()
 
@@ -378,10 +410,65 @@ function _onProfileUpdated(event) {
   // Single-pass re-hydration of the profile section only
   section.innerHTML = _renderDashboardContent(enriched, latestManifest)
 
-  // Rebind deletion CTA — new DOM element, previous listener is gone
+  // Rebind profile reset + deletion CTA — new DOM elements, previous listeners gone
+  _initProfileReset()
   _initDeleteCTA()
 
   console.log('[CRATE] ParentDashboard: profile section re-hydrated — session', profile.sessionCount)
+}
+
+// ── _initProfileReset() ──────────────────────────────────────────────────────
+// Wires the "Reset Play Profile" button. Clears only play trajectory data —
+// cr_sim_profile*, cr_sim_sessions*, cr_binary_sessions* — while preserving
+// the parent account (cr_parent_token, cr_popia_signed, auth state).
+// Two-step confirmation matches the deletion CTA pattern.
+function _initProfileReset() {
+  const btn = document.getElementById('cr-reset-profile-btn')
+  if (!btn) return
+
+  let _pendingReset = false
+
+  btn.addEventListener('click', () => {
+    if (!_pendingReset) {
+      _pendingReset    = true
+      btn.textContent  = 'Confirm — tap again to clear play data'
+      btn.classList.add('border-cr-coral/40', 'text-cr-coral')
+      setTimeout(() => {
+        if (_pendingReset) {
+          _pendingReset   = false
+          btn.textContent = 'Reset Play Profile'
+          btn.classList.remove('border-cr-coral/40', 'text-cr-coral')
+        }
+      }, 6000)
+      return
+    }
+    _executePlayDataReset()
+  })
+}
+
+// ── _executePlayDataReset() ───────────────────────────────────────────────────
+// Removes only play-trajectory and session-history keys from localStorage.
+// Account auth, POPIA consent, and subscription data are NOT touched.
+function _executePlayDataReset() {
+  const playKeys = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key) continue
+    if (
+      key.startsWith('cr_sim_profile') ||
+      key.startsWith('cr_sim_sessions') ||
+      key.startsWith('cr_binary_sessions') ||
+      key === 'cr_child_uuid' ||
+      key === 'cr_child_nickname' ||
+      key === 'cr_child_age_group'
+    ) {
+      playKeys.push(key)
+    }
+  }
+  playKeys.forEach(k => localStorage.removeItem(k))
+  console.log('[CRATE] ParentDashboard: play profile reset —', playKeys.length, 'keys cleared:', playKeys.join(', '))
+  // Hard reload so the dashboard re-renders with empty/emerging state
+  window.location.reload()
 }
 
 // ── _initDeleteCTA() ─────────────────────────────────────────────────────────

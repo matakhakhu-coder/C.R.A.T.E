@@ -170,15 +170,35 @@ function _computePosterior(dim, existingDim, sessionSignals) {
   let unnormD   = priorD
   let unnormEst = priorEst
 
-  // Multiply by the likelihood of each observed (active) signal
+  // Multiply by the likelihood of each observed (active) signal.
+  //
+  // Discrimination rule (prevents premature convergence):
+  //   PRIMARY signals for this dimension  → full weight multiplication
+  //   NON-PRIMARY (generic) signals       → √weight dampening
+  //
+  // Rationale: generic signals (explorationBreadth, timeToFirstAction,
+  // speedVariability) fire every session for almost every child and carry
+  // positive established weights across ALL dimensions. Without dampening,
+  // a few sessions push all six dimensions simultaneously to 'established'
+  // regardless of actual play style. Primary signals are specific to the
+  // dimension and should dominate its posterior trajectory.
   for (const [signalKey, weights] of Object.entries(dim.signalWeights)) {
     const observed = (sessionSignals[signalKey] || 0) > 0
     if (!observed) continue
 
-    // P(signal active | state) — direct lookup from the weight table
-    unnormE   *= weights.emerging
-    unnormD   *= weights.developing
-    unnormEst *= weights.established
+    const isPrimary = dim.primarySignals.includes(signalKey)
+
+    if (isPrimary) {
+      // Full Bayesian update for signals specific to this interest area
+      unnormE   *= weights.emerging
+      unnormD   *= weights.developing
+      unnormEst *= weights.established
+    } else {
+      // Dampened update for generic co-occurring signals (√w keeps direction, reduces magnitude)
+      unnormE   *= Math.sqrt(weights.emerging)
+      unnormD   *= Math.sqrt(weights.developing)
+      unnormEst *= Math.sqrt(weights.established)
+    }
   }
 
   // Normalise so posteriors sum exactly to 1.0
