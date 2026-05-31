@@ -16,6 +16,8 @@ import { storeParentRecord }   from '@/core/integrations/piiStore.js'
 // Phase 4: uploadSessionData and assessment now handled by TelemetryCollector pipeline.
 // TelemetryCollector receives cr:sessionEnd, calls uploadSessionData, then AssessmentEngine.
 import { init as initTelemetryCollector } from '@/modules/TelemetryCollector.js'
+// Phase 5: ParentDashboard renders and initialises the authenticated parent view.
+import * as ParentDashboard from '@/modules/ParentDashboard.js'
 
 // ── DOM mount ─────────────────────────────────────────────────────────────────
 const app = document.getElementById('app')
@@ -623,7 +625,8 @@ function render(path, ctx = {}) {
   }
 
   if (route === '/app') {
-    if (ctx.isOnboarded) return _renderAppPortal()
+    // Phase 5: authenticated parents see the ParentDashboard, not the portal stub
+    if (ctx.isOnboarded) return ParentDashboard.render(ctx.activeProfile)
     const d = _appFormData
     if (_appStep === 1) return _renderWizardStep1(d)
     if (_appStep === 2) return _renderWizardStep2(d)
@@ -719,7 +722,8 @@ function _initMarketingShell() {
 // PHASE 2 INIT
 // =============================================================================
 function _initApp(ctx) {
-  if (ctx.isOnboarded) { console.log('[CRATE] /app — portal view active'); return }
+  // Phase 5: hand off to ParentDashboard.init() for the authenticated view
+  if (ctx.isOnboarded) { ParentDashboard.init(ctx.activeProfile); return }
   const s = _appStep
   if (s === 1) _initStep1()
   if (s === 2) _initStep2()
@@ -1393,9 +1397,25 @@ function _hydrate(path) {
   }
   _previousRoute = route
 
+  // Load active child profile for Phase 5 dashboard — pseudoUUID keyed, zero PII
+  const _uuid       = localStorage.getItem('cr_child_uuid')
+  const _profileRaw = localStorage.getItem('cr_sim_profile')
+                   || (_uuid ? localStorage.getItem(`cr_sim_profile_${_uuid}`) : null)
+  let _activeProfile = null
+  if (_profileRaw) {
+    try {
+      _activeProfile = {
+        ...JSON.parse(_profileRaw),
+        childNickname: localStorage.getItem('cr_child_nickname') || 'Explorer',
+        childAgeGroup: localStorage.getItem('cr_child_age_group') || '',
+      }
+    } catch { /* corrupted profile — render empty state */ }
+  }
+
   const ctx = {
     consentAccepted: localStorage.getItem('cr_consent_accepted') === 'true',
     isOnboarded:     !!localStorage.getItem('cr_parent_token') && localStorage.getItem('cr_popia_signed') === 'true',
+    activeProfile:   _activeProfile,
   }
 
   app.innerHTML = render(path, ctx)   // ONE innerHTML write
