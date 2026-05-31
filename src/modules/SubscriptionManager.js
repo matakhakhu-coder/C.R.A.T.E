@@ -53,7 +53,10 @@ let _selectedLoc     = null         // { id, name, address }
 let _lockerDebounce  = null
 
 // Annual discount factor
-const _ANNUAL_DISCOUNT = 0.85       // 15% off monthly × 12
+// _ANNUAL_DISCOUNT = 0.85 retained for reference.
+// All price calculations use integer arithmetic (×85/100) to avoid
+// IEEE 754 float truncation: Math.round(850 × 0.85) = 722 ≠ 723.
+const _ANNUAL_DISCOUNT = 0.85
 
 // =============================================================================
 // EXPORTED: render(selectedPlanId)
@@ -121,7 +124,7 @@ export function render(selectedPlanId = null) {
             ${Object.values(_PLANS).map(p => {
               const isActive  = p.id === _activePlan
               const price     = _billingFreq === 'annual'
-                ? Math.round(p.monthlyPrice * _ANNUAL_DISCOUNT)
+                ? Math.round((p.monthlyPrice * 85) / 100)
                 : p.monthlyPrice
               return `
                 <button type="button" data-plan="${p.id}"
@@ -255,7 +258,7 @@ export function render(selectedPlanId = null) {
             <span class="font-heading text-cr-cream font-extrabold text-lg"
                   id="cr-summary-price">
               R${_billingFreq === 'annual'
-                ? Math.round(_PLANS[_activePlan].monthlyPrice * _ANNUAL_DISCOUNT)
+                ? Math.round((_PLANS[_activePlan].monthlyPrice * 85) / 100)
                 : _PLANS[_activePlan].monthlyPrice}/mo
             </span>
           </div>
@@ -292,6 +295,9 @@ function _checkoutField(id, type, label, placeholder) {
 // EXPORTED: init(selectedPlanId)
 // =============================================================================
 export function init(selectedPlanId = null) {
+  // Reset delivery selection on every mount — prevents stale locker/point
+  // from a previous visit persisting invisibly into a new checkout attempt.
+  _selectedLoc = null
   if (selectedPlanId) _activePlan = selectedPlanId
 
   // ── Plan selection ────────────────────────────────────────────────────────
@@ -386,7 +392,7 @@ function _refreshBillingUI() {
   document.querySelectorAll('[data-plan]').forEach(b => {
     const plan  = _PLANS[b.getAttribute('data-plan')]
     const price = _billingFreq === 'annual'
-      ? Math.round(plan.monthlyPrice * _ANNUAL_DISCOUNT)
+      ? Math.round((plan.monthlyPrice * 85) / 100)
       : plan.monthlyPrice
     const priceEl = b.querySelector('.text-xl')
     if (priceEl) priceEl.textContent = `R${price}`
@@ -418,7 +424,7 @@ function _refreshDeliveryUI() {
 function _refreshSummary() {
   const plan  = _PLANS[_activePlan]
   const price = _billingFreq === 'annual'
-    ? Math.round(plan.monthlyPrice * _ANNUAL_DISCOUNT)
+    ? Math.round((plan.monthlyPrice * 85) / 100)
     : plan.monthlyPrice
   const planEl  = document.getElementById('cr-summary-plan')
   const freqEl  = document.getElementById('cr-summary-freq')
@@ -553,7 +559,7 @@ async function _handleCheckout(btn) {
   try {
     const plan  = _PLANS[_activePlan]
     const price = _billingFreq === 'annual'
-      ? Math.round(plan.monthlyPrice * _ANNUAL_DISCOUNT)
+      ? Math.round((plan.monthlyPrice * 85) / 100)
       : plan.monthlyPrice
 
     // ── Step 1: Create subscription (payment adapter) ─────────────────────

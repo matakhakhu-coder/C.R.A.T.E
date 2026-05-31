@@ -70,12 +70,14 @@ let _sandboxDragLog    = []    // [{ durationMs }] — last 10 drag events
 let _sandboxTouchZones = new Set() // Grid cell strings 'cx,cy' touched
 
 // ── Phase 11.5 constructivist engine state ────────────────────────────────────
-let _sandboxGravity         = 0.35    // mutable; ZPD interpolates this each frame
-let _sandboxWindX           = 0       // ambient horizontal force vector
-let _sandboxRestitution     = 0.45    // mutable; ZPD interpolates this each frame
-let _zpdTier                = 1       // current tier index (0–3)
-let _zpdTargetGravity       = 0.35    // ZPD interpolation target
-let _zpdTargetRestitution   = 0.45    // ZPD interpolation target
+let _sandboxGravity          = 0.35    // mutable; ZPD interpolates this each frame
+let _sandboxWindX            = 0       // ambient horizontal force vector
+let _sandboxRestitution      = 0.45    // mutable; ZPD interpolates this each frame
+let _sandboxGroundFriction   = 0.985   // mutable; ZPD interpolates this each frame
+let _zpdTier                 = 1       // current tier index (0–3)
+let _zpdTargetGravity        = 0.35    // ZPD interpolation target
+let _zpdTargetRestitution    = 0.45    // ZPD interpolation target
+let _zpdTargetGroundFriction = 0.985   // ZPD interpolation target
 let _sandboxGhostType       = null    // shape type currently hovered in sidebar
 let _sandboxGhostX          = 0       // ghost wireframe center x
 let _sandboxGhostY          = 0       // ghost wireframe center y
@@ -843,18 +845,39 @@ function _initStep1() {
 }
 
 async function _initStep2() {
+  const inp = document.getElementById('otp-input')
+  const btn = document.getElementById('otp-verify-btn')
+  const err = document.getElementById('err-otp')
+  const res = document.getElementById('otp-resend')
+
+  // ── Loading state: disable inputs while OTP dispatch is in-flight ──────────
+  // Without this guard the 450ms SIM delay leaves the verify form in an
+  // ambiguous state — parent can type and submit before the code is "sent".
+  if (inp) { inp.disabled = true; inp.placeholder = 'Sending secure verification code via SMS...' }
+  if (btn) { btn.disabled = true; btn.classList.add('opacity-50', 'cursor-not-allowed') }
+
   try {
     const r = await sendOTP({ phoneNumber: _appFormData.parentPhone, consentSessionId: `cr-session-${Date.now()}` })
     console.log('[SIM] main.js — OTP dispatched · phone present:', !!_appFormData.parentPhone)
     console.log('[SIM] main.js — sentAt:', r.sentAt)
     console.log('[SIM] main.js — enter "000000" to proceed in simulation mode')
-  } catch (e) { _showToast('Failed to send verification code', false) }
+  } catch (e) {
+    if (inp) { inp.disabled = false; inp.placeholder = '000000' }
+    if (btn) { btn.disabled = false; btn.classList.remove('opacity-50', 'cursor-not-allowed') }
+    _showToast('Failed to send verification code', false)
+    return
+  }
 
-  const inp = document.getElementById('otp-input')
-  const btn = document.getElementById('otp-verify-btn')
-  const err = document.getElementById('err-otp')
-  const res = document.getElementById('otp-resend')
-  if (inp) inp.focus()
+  // ── Restore and focus once OTP is confirmed dispatched ─────────────────────
+  if (inp) {
+    inp.disabled    = false
+    inp.placeholder = '000000'
+    inp.focus()
+  }
+  if (btn) {
+    btn.disabled = false
+    btn.classList.remove('opacity-50', 'cursor-not-allowed')
+  }
   if (btn && inp) {
     btn.addEventListener('click', async () => {
       const code = inp.value.trim()
@@ -1165,10 +1188,12 @@ function _initSandbox() {
     const { direction } = e.detail || {}
     if (direction === 'challenge' && _zpdTier < 3) _zpdTier++
     if (direction === 'soften'    && _zpdTier > 0) _zpdTier--
-    const target             = _ZPD_TIERS[_zpdTier]
-    _zpdTargetGravity        = target.gravity
-    _zpdTargetRestitution    = target.restitution
-    console.log('[CRATE] sandbox — ZPD tier shift →', _zpdTier, direction)
+    const target                = _ZPD_TIERS[_zpdTier]
+    _zpdTargetGravity           = target.gravity
+    _zpdTargetRestitution       = target.restitution
+    _zpdTargetGroundFriction    = target.groundFriction   // now wired ✓
+    console.log('[CRATE] sandbox — ZPD tier shift →', _zpdTier, direction,
+      '| gravity →', target.gravity, '| groundFriction →', target.groundFriction)
   })
 
   // ── Game loop ─────────────────────────────────────────────────────────────
@@ -1183,8 +1208,9 @@ function _initSandbox() {
     _frameCount++
 
     // Phase 11.5: Smooth ZPD physics interpolation (2% convergence per frame ≈ 50 frames)
-    _sandboxGravity     += (_zpdTargetGravity     - _sandboxGravity    ) * 0.02
-    _sandboxRestitution += (_zpdTargetRestitution - _sandboxRestitution) * 0.02
+    _sandboxGravity        += (_zpdTargetGravity        - _sandboxGravity       ) * 0.02
+    _sandboxRestitution    += (_zpdTargetRestitution    - _sandboxRestitution   ) * 0.02
+    _sandboxGroundFriction += (_zpdTargetGroundFriction - _sandboxGroundFriction) * 0.02
 
     const W = canvas.width, H = canvas.height
 
@@ -1234,8 +1260,8 @@ function _physStep(b, W, H) {
     b.y  = H - 8 - hh
     const bodyRest = b.restitution ?? _sandboxRestitution
     b.vy = b.vy < 0 ? b.vy : -Math.abs(b.vy) * bodyRest
-    // mu modulates ground friction: low mu (ice) = almost no deceleration
-    b.vx *= (_PHYS.GROUND_FRICTION * (1 - (b.mu ?? 0.4) * 0.05))
+    // mu modulates ground friction; _sandboxGroundFriction is ZPD-tier-interpolated
+    b.vx *= (_sandboxGroundFriction * (1 - (b.mu ?? 0.4) * 0.05))
     if (Math.abs(b.vy) < 0.6) b.vy = 0
     b.onGround = true
     b.angularVelocity *= 0.85
@@ -1278,17 +1304,22 @@ function _physCollide(bodies) {
       const overY = (a.height + b.height) / 2 - Math.abs(dy)
       if (overX <= 0 || overY <= 0) continue
 
+      // Phase 11.5 fix: use averaged per-body restitution so material pairs
+      // (e.g. Iron vs Rubber) produce distinct collision responses.
+      // Falls back to _sandboxRestitution for legacy bodies without .restitution.
+      const avgRest = ((a.restitution ?? _sandboxRestitution) + (b.restitution ?? _sandboxRestitution)) / 2
+
       if (overX < overY) {
         const sx = dx > 0 ? 1 : -1
         a.x -= sx * overX / 2; b.x += sx * overX / 2
         const rvx = b.vx - a.vx
-        const imp = rvx * (1 + _PHYS.RESTITUTION) / 2
+        const imp = rvx * (1 + avgRest) / 2
         a.vx += imp; b.vx -= imp
       } else {
         const sy = dy > 0 ? 1 : -1
         a.y -= sy * overY / 2; b.y += sy * overY / 2
         const rvy = b.vy - a.vy
-        const imp = rvy * (1 + _PHYS.RESTITUTION) / 2
+        const imp = rvy * (1 + avgRest) / 2
         a.vy += imp; b.vy -= imp
         // Add gentle angular impulse for visual interest
         a.angularVelocity += (Math.random() - 0.5) * 0.03

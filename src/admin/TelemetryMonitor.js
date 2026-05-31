@@ -11,9 +11,23 @@
 import { FLAGS }                    from '@/core/flags.js'
 import { BAYESIAN_ASSESSMENT_MATRIX } from '@/core/assessmentTables.js'
 
-// ── Wheel-spin event log (in-memory per admin session) ────────────────────────
-let _wheelSpinLog    = []
-let _wsListenerBound = false
+// ── Wheel-spin event log — persisted in localStorage across admin view swaps ──
+// cr_admin_wheel_spin_log: [{ retryCount, timestamp }] (max 20 entries, LIFO)
+const _WHEEL_LOG_KEY  = 'cr_admin_wheel_spin_log'
+let   _wheelSpinLog   = []     // in-memory mirror for live DOM updates
+let   _wsListenerBound = false
+
+// ── _loadWheelLog() — reads persisted log (called by render and init) ─────────
+function _loadWheelLog() {
+  try { return JSON.parse(localStorage.getItem(_WHEEL_LOG_KEY) || '[]') }
+  catch { return [] }
+}
+
+// ── _saveWheelLog(log) — commits log to localStorage ─────────────────────────
+function _saveWheelLog(log) {
+  try { localStorage.setItem(_WHEEL_LOG_KEY, JSON.stringify(log)) }
+  catch { /* storage full — silently continue */ }
+}
 
 // ── Load all child profiles from localStorage ──────────────────────────────────
 function _loadProfiles() {
@@ -116,11 +130,13 @@ export function render() {
     </div>`
 
   // ── Section 3: Wheel-spin event stream ──────────────────────────────────
-  const wsRows = _wheelSpinLog.length === 0
+  // Read from localStorage so history persists across view swaps and admin reopens.
+  const _persistedLog = _loadWheelLog()
+  const wsRows = _persistedLog.length === 0
     ? `<p class="font-body text-cr-cream/25 text-xs px-5 py-4">
-         No playground friction loops detected this session. Monitor updates in real time.
+         No playground friction loops detected. Monitor updates in real time.
        </p>`
-    : _wheelSpinLog.map(e => `
+    : _persistedLog.map(e => `
         <div class="border-b border-cr-slate/30 last:border-b-0 px-5 py-3 flex items-center gap-3">
           <span class="text-cr-coral text-xs">&#9650;</span>
           <div>
@@ -197,17 +213,30 @@ export function render() {
 // EXPORTED: init()
 // =============================================================================
 export function init() {
+  // Hydrate in-memory log from localStorage on every admin view open.
+  // This ensures events captured while admin was closed are visible immediately.
+  _wheelSpinLog = _loadWheelLog()
+
   // ── Bind cr:wheelSpinDetected listener (idempotent) ───────────────────────
   if (!_wsListenerBound) {
     _wsListenerBound = true
     document.addEventListener('cr:wheelSpinDetected', (e) => {
       const { retryCount } = e.detail || {}
-      _wheelSpinLog.unshift({
+      const entry = {
         retryCount: retryCount || '?',
         timestamp:  new Date().toLocaleTimeString('en-ZA'),
-      })
-      if (_wheelSpinLog.length > 20) _wheelSpinLog.pop()
-      // Live-update the wheel-spin log block if visible
+      }
+
+      // ── Persist to localStorage so log survives view swaps ────────────────
+      const log = _loadWheelLog()
+      log.unshift(entry)
+      if (log.length > 20) log.length = 20
+      _saveWheelLog(log)
+
+      // ── Mirror in memory for live DOM update ──────────────────────────────
+      _wheelSpinLog = log
+
+      // ── Live-update the DOM if the wheel-spin panel is currently visible ──
       const logEl = document.getElementById('cr-telemetry-wheel-log')
       if (logEl) {
         logEl.innerHTML = _wheelSpinLog.map(ev => `
